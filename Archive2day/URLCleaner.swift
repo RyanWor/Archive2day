@@ -1,44 +1,66 @@
 import Foundation
 
+/// All external service URLs and archive.today logic in one place.
+/// If archive.today changes its URL structure, update here only.
+enum ExternalURLs {
+    static let archiveNewest  = "https://archive.today/newest/"
+    static let archiveSubmit  = "https://archive.today/?run=1&url="
+}
+
+/// Result of checking whether an archive exists
+enum ArchiveCheckResult {
+    case exists         // 200 or redirect — archive found, open it
+    case notFound       // 404 — never archived, offer to submit
+    case error(String)  // 5xx, timeout, network failure — don't assume either way
+}
+
 /// Cleans and prepares URLs for archive.today lookup
 enum URLCleaner {
 
-    /// Strips tracking parameters, fragments, and normalizes the URL
-    /// so archive.today gets a clean canonical URL to look up
-    static func clean(_ urlString: String) -> String {
+    /// Tracking/UTM parameters that pollute archive lookups
+    private static let trackingParams: Set<String> = [
+        "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content",
+        "utm_id", "fbclid", "gclid", "msclkid", "mc_eid", "ref", "referrer",
+        "_hsenc", "_hsmi", "hsCtaTracking", "mkt_tok", "igshid", "s_cid",
+        "ncid", "cid", "wt.mc_id", "wt.srch", "ocid", "feature", "src"
+    ]
+
+    /// Validates that a URL string is well-formed with an https/http scheme and a host
+    static func validate(_ urlString: String) -> Result<URL, String> {
         let trimmed = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard var components = URLComponents(string: trimmed) else { return trimmed }
-
-        // Remove tracking/UTM query params that pollute the archive lookup
-        let trackingParams: Set<String> = [
-            "utm_source","utm_medium","utm_campaign","utm_term","utm_content",
-            "utm_id","fbclid","gclid","msclkid","mc_eid","ref","referrer",
-            "_hsenc","_hsmi","hsCtaTracking","mkt_tok","igshid","s_cid",
-            "ncid","cid","WT.mc_id","WT.srch","ocid","feature","src"
-        ]
-
-        if let items = components.queryItems {
-            let filtered = items.filter { !trackingParams.contains($0.name.lowercased()) && !trackingParams.contains($0.name) }
-            components.queryItems = filtered.isEmpty ? nil : filtered
+        guard !trimmed.isEmpty else { return .failure("URL is empty") }
+        guard let url = URL(string: trimmed) else { return .failure("Not a valid URL") }
+        guard let scheme = url.scheme?.lowercased(), scheme == "https" || scheme == "http" else {
+            return .failure("URL must start with http:// or https://")
         }
-
-        // Remove fragment (archive.today ignores it anyway)
-        components.fragment = nil
-
-        return components.url?.absoluteString ?? trimmed
+        guard let host = url.host, !host.isEmpty else {
+            return .failure("URL has no host")
+        }
+        return .success(url)
     }
 
-    /// Builds the archive.today URL to check for an existing snapshot
+    /// Strips tracking parameters and fragment from a URL
+    static func clean(_ urlString: String) -> String {
+        guard var components = URLComponents(string: urlString) else { return urlString }
+        if let items = components.queryItems {
+            let filtered = items.filter { !trackingParams.contains($0.name.lowercased()) }
+            components.queryItems = filtered.isEmpty ? nil : filtered
+        }
+        components.fragment = nil
+        return components.url?.absoluteString ?? urlString
+    }
+
+    /// Builds the archive.today URL to view the newest snapshot
     static func archiveSearchURL(for url: String) -> URL? {
         let cleaned = clean(url)
         let encoded = cleaned.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? cleaned
-        return URL(string: "https://archive.today/newest/\(encoded)")
+        return URL(string: "\(ExternalURLs.archiveNewest)\(encoded)")
     }
 
     /// Builds the archive.today URL to submit a new snapshot
     static func archiveSubmitURL(for url: String) -> URL? {
         let cleaned = clean(url)
         let encoded = cleaned.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? cleaned
-        return URL(string: "https://archive.today/?run=1&url=\(encoded)")
+        return URL(string: "\(ExternalURLs.archiveSubmit)\(encoded)")
     }
 }

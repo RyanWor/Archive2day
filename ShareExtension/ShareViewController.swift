@@ -1,6 +1,10 @@
 import UIKit
 import SafariServices
 import UniformTypeIdentifiers
+import OSLog
+
+// MARK: - Logger
+private let logger = Logger(subsystem: "com.yourname.archive2day.ShareExtension", category: "ShareViewController")
 
 class ShareViewController: UIViewController {
 
@@ -9,14 +13,14 @@ class ShareViewController: UIViewController {
     private let accentGreen = UIColor(red: 0.29, green: 0.87, blue: 0.50, alpha: 1)
 
     // MARK: - UI
-    private let cardView      = UIView()
-    private let iconView      = UIImageView()
-    private let titleLabel    = UILabel()
-    private let statusLabel   = UILabel()
-    private let spinner       = UIActivityIndicatorView(style: .medium)
-    private let promptStack   = UIStackView()
-    private let submitButton  = UIButton(type: .system)
-    private let cancelButton  = UIButton(type: .system)
+    private let cardView     = UIView()
+    private let iconView     = UIImageView()
+    private let titleLabel   = UILabel()
+    private let statusLabel  = UILabel()
+    private let spinner      = UIActivityIndicatorView(style: .medium)
+    private let promptStack  = UIStackView()
+    private let submitButton = UIButton(type: .system)
+    private let cancelButton = UIButton(type: .system)
 
     // MARK: - Lifecycle
 
@@ -75,7 +79,7 @@ class ShareViewController: UIViewController {
         spinner.translatesAutoresizingMaskIntoConstraints = false
         cardView.addSubview(spinner)
 
-        // Prompt stack — shown only when no archive found
+        // Prompt stack — only shown when no archive exists
         promptStack.axis = .vertical
         promptStack.spacing = 10
         promptStack.isHidden = true
@@ -158,21 +162,33 @@ class ShareViewController: UIViewController {
     private func processSharedItems() {
         guard let item = extensionContext?.inputItems.first as? NSExtensionItem,
               let attachments = item.attachments else {
-            showError("No content received"); return
+            logger.error("No extension input items received")
+            showError("No content received")
+            return
         }
 
         for attachment in attachments {
             if attachment.hasItemConformingToTypeIdentifier(UTType.url.identifier) {
-                attachment.loadItem(forTypeIdentifier: UTType.url.identifier, options: nil) { [weak self] item, _ in
+                attachment.loadItem(forTypeIdentifier: UTType.url.identifier, options: nil) { [weak self] item, error in
+                    if let error = error {
+                        logger.error("Failed to load URL item: \(error.localizedDescription)")
+                    }
                     DispatchQueue.main.async {
-                        if let url = item as? URL { self?.handleURL(url) }
-                        else if let str = item as? String, let url = URL(string: str) { self?.handleURL(url) }
-                        else { self?.showError("Couldn't read the shared URL") }
+                        if let url = item as? URL {
+                            self?.handleURL(url)
+                        } else if let str = item as? String, let url = URL(string: str) {
+                            self?.handleURL(url)
+                        } else {
+                            self?.showError("Couldn't read the shared URL")
+                        }
                     }
                 }
                 return
             } else if attachment.hasItemConformingToTypeIdentifier(UTType.plainText.identifier) {
-                attachment.loadItem(forTypeIdentifier: UTType.plainText.identifier, options: nil) { [weak self] item, _ in
+                attachment.loadItem(forTypeIdentifier: UTType.plainText.identifier, options: nil) { [weak self] item, error in
+                    if let error = error {
+                        logger.error("Failed to load text item: \(error.localizedDescription)")
+                    }
                     DispatchQueue.main.async {
                         if let text = item as? String,
                            let url = (try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue))?
@@ -190,19 +206,31 @@ class ShareViewController: UIViewController {
     }
 
     private func handleURL(_ url: URL) {
+        // Validate before proceeding
+        let urlString = url.absoluteString
+        switch URLCleaner.validate(urlString) {
+        case .failure(let reason):
+            logger.warning("URL validation failed: \(reason) — \(urlString)")
+            showError("Invalid URL: \(reason)")
+            return
+        case .success:
+            break
+        }
+
         sharedURL = url
-        let host = url.host ?? url.absoluteString
+        let host = url.host ?? urlString
+        logger.info("Processing URL: \(urlString)")
         updateStatus("Checking archive for\n\(host)...")
         checkArchiveExists(for: url)
     }
 
-    // MARK: - Archive check
+    // MARK: - Archive existence check
 
-    /// Makes a HEAD request to archive.today/newest/{url}.
-    /// archive.today returns 200/redirect if an archive exists, 404 if not.
     private func checkArchiveExists(for url: URL) {
         guard let archiveURL = URLCleaner.archiveSearchURL(for: url.absoluteString) else {
-            showError("Couldn't build archive URL"); return
+            logger.error("Failed to build archive search URL for: \(url.absoluteString)")
+            showError("Couldn't build archive URL")
+            return
         }
 
         var request = URLRequest(url: archiveURL)
@@ -212,15 +240,21 @@ class ShareViewController: UIViewController {
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 8
 
-        // Capture the HTTP status — don't follow redirects, just check the response code
-        let delegate = StatusCheckDelegate { [weak self] statusCode in
+        let delegate = StatusCheckDelegate { [weak self] result in
             DispatchQueue.main.async {
-                if statusCode == 404 || statusCode == 0 {
-                    // No archive found — ask user if they want to submit
-                    self?.showNoArchivePrompt()
-                } else {
-                    // Archive exists — open it directly, no prompt needed
+                switch result {
+                case .exists:
+                    logger.info("Archive found — opening directly")
                     self?.openInSafariVC(archiveURL)
+
+                case .notFound:
+                    logger.info("No archive found — prompting user to submit")
+                    self?.showNoArchivePrompt()
+
+                case .error(let reason):
+                    // archive.today may be down or rate-limiting — don't assume either way
+                    logger.warning("Archive check failed: \(reason)")
+                    self?.showCheckError(reason)
                 }
             }
         }
@@ -241,17 +275,28 @@ class ShareViewController: UIViewController {
         UIView.animate(withDuration: 0.2) { self.view.layoutIfNeeded() }
     }
 
+    private func showCheckError(_ reason: String) {
+        // archive.today returned an unexpected response (5xx, timeout, etc.)
+        // Don't silently assume no archive exists — show a clear error instead
+        spinner.stopAnimating()
+        spinner.isHidden = true
+        statusLabel.text = "Couldn't reach archive.today.\nCheck your connection and try again."
+        statusLabel.textColor = UIColor(red: 0.97, green: 0.44, blue: 0.44, alpha: 1)
+        cancelButton.isHidden = false
+    }
+
     // MARK: - Actions
 
     @objc private func submitArchiveTapped() {
         guard let url = sharedURL,
               let submitURL = URLCleaner.archiveSubmitURL(for: url.absoluteString) else {
-            cancelTapped(); return
+            logger.error("Failed to build submit URL")
+            cancelTapped()
+            return
         }
+        logger.info("Submitting for archiving: \(url.absoluteString)")
         openInSafariVC(submitURL)
     }
-
-    // MARK: - Open via SFSafariViewController (works from any host app)
 
     private func openInSafariVC(_ url: URL) {
         DispatchQueue.main.async { [weak self] in
@@ -294,16 +339,15 @@ extension ShareViewController: SFSafariViewControllerDelegate {
     }
 }
 
-// MARK: - HTTP status delegate (HEAD request, no redirect following)
+// MARK: - HTTP status delegate
 private class StatusCheckDelegate: NSObject, URLSessionDataDelegate, URLSessionTaskDelegate {
-    let completion: (Int) -> Void
+    let completion: (ArchiveCheckResult) -> Void
     private var handled = false
 
-    init(completion: @escaping (Int) -> Void) {
+    init(completion: @escaping (ArchiveCheckResult) -> Void) {
         self.completion = completion
     }
 
-    // Capture the first response (before any redirect)
     func urlSession(_ session: URLSession,
                     dataTask: URLSessionDataTask,
                     didReceive response: URLResponse,
@@ -311,11 +355,10 @@ private class StatusCheckDelegate: NSObject, URLSessionDataDelegate, URLSessionT
         guard !handled else { completionHandler(.cancel); return }
         handled = true
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-        completion(status)
+        completion(archiveResult(for: status))
         completionHandler(.cancel)
     }
 
-    // Also catch redirect responses directly
     func urlSession(_ session: URLSession,
                     task: URLSessionTask,
                     willPerformHTTPRedirection response: HTTPURLResponse,
@@ -323,14 +366,33 @@ private class StatusCheckDelegate: NSObject, URLSessionDataDelegate, URLSessionT
                     completionHandler: @escaping (URLRequest?) -> Void) {
         guard !handled else { completionHandler(nil); return }
         handled = true
-        // A redirect means an archive exists
-        completion(response.statusCode)
+        // Any redirect from /newest/ means an archive was found
+        completion(.exists)
         completionHandler(nil)
     }
 
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
         guard !handled else { return }
         handled = true
-        completion(0) // Treat network error as "no archive"
+        if let error = error {
+            completion(.error(error.localizedDescription))
+        }
+    }
+
+    private func archiveResult(for statusCode: Int) -> ArchiveCheckResult {
+        switch statusCode {
+        case 200, 301, 302, 303, 307, 308:
+            return .exists
+        case 404:
+            return .notFound
+        case 429:
+            return .error("archive.today is rate-limiting requests. Try again in a moment.")
+        case 500...599:
+            return .error("archive.today returned a server error (\(statusCode)).")
+        case 0:
+            return .error("No response received.")
+        default:
+            return .error("Unexpected response from archive.today (HTTP \(statusCode)).")
+        }
     }
 }
