@@ -3,34 +3,23 @@ import SafariServices
 import UniformTypeIdentifiers
 import OSLog
 
-// MARK: - Logger
 private let logger = Logger(subsystem: "com.yourname.archive2day.ShareExtension", category: "ShareViewController")
 
 class ShareViewController: UIViewController {
 
-    // MARK: - State
-    private var sharedURL: URL?
     private let accentGreen = UIColor(red: 0.29, green: 0.87, blue: 0.50, alpha: 1)
-
-    // MARK: - UI
-    private let cardView     = UIView()
-    private let iconView     = UIImageView()
-    private let titleLabel   = UILabel()
-    private let statusLabel  = UILabel()
-    private let spinner      = UIActivityIndicatorView(style: .medium)
-    private let promptStack  = UIStackView()
-    private let submitButton = UIButton(type: .system)
+    private let cardView    = UIView()
+    private let iconView    = UIImageView()
+    private let titleLabel  = UILabel()
+    private let statusLabel = UILabel()
+    private let spinner     = UIActivityIndicatorView(style: .medium)
     private let cancelButton = UIButton(type: .system)
-
-    // MARK: - Lifecycle
 
     override func viewDidLoad() {
         super.viewDidLoad()
         setupUI()
         processSharedItems()
     }
-
-    // MARK: - UI Setup
 
     private func setupUI() {
         view.backgroundColor = UIColor.black.withAlphaComponent(0.6)
@@ -66,11 +55,11 @@ class ShareViewController: UIViewController {
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         cardView.addSubview(titleLabel)
 
-        statusLabel.text = "Checking for archive..."
+        statusLabel.text = "Opening archive..."
         statusLabel.font = .systemFont(ofSize: 14)
         statusLabel.textColor = UIColor(white: 0.5, alpha: 1)
         statusLabel.textAlignment = .center
-        statusLabel.numberOfLines = 4
+        statusLabel.numberOfLines = 3
         statusLabel.translatesAutoresizingMaskIntoConstraints = false
         cardView.addSubview(statusLabel)
 
@@ -78,23 +67,6 @@ class ShareViewController: UIViewController {
         spinner.startAnimating()
         spinner.translatesAutoresizingMaskIntoConstraints = false
         cardView.addSubview(spinner)
-
-        // Prompt stack — only shown when no archive exists
-        promptStack.axis = .vertical
-        promptStack.spacing = 10
-        promptStack.isHidden = true
-        promptStack.translatesAutoresizingMaskIntoConstraints = false
-        cardView.addSubview(promptStack)
-
-        styleButton(submitButton, title: "Submit for archiving", filled: true)
-        submitButton.addTarget(self, action: #selector(submitArchiveTapped), for: .touchUpInside)
-
-        let skipBtn = UIButton(type: .system)
-        styleButton(skipBtn, title: "Cancel", filled: false, muted: true)
-        skipBtn.addTarget(self, action: #selector(cancelTapped), for: .touchUpInside)
-
-        promptStack.addArrangedSubview(submitButton)
-        promptStack.addArrangedSubview(skipBtn)
 
         cancelButton.setTitle("Cancel", for: .normal)
         cancelButton.setTitleColor(UIColor(white: 0.35, alpha: 1), for: .normal)
@@ -129,32 +101,10 @@ class ShareViewController: UIViewController {
             statusLabel.leadingAnchor.constraint(equalTo: cardView.leadingAnchor, constant: 20),
             statusLabel.trailingAnchor.constraint(equalTo: cardView.trailingAnchor, constant: -20),
 
-            promptStack.topAnchor.constraint(equalTo: statusLabel.bottomAnchor, constant: 16),
-            promptStack.leadingAnchor.constraint(equalTo: cardView.leadingAnchor, constant: 20),
-            promptStack.trailingAnchor.constraint(equalTo: cardView.trailingAnchor, constant: -20),
-
-            cancelButton.topAnchor.constraint(equalTo: promptStack.bottomAnchor, constant: 4),
+            cancelButton.topAnchor.constraint(equalTo: statusLabel.bottomAnchor, constant: 20),
             cancelButton.centerXAnchor.constraint(equalTo: cardView.centerXAnchor),
             cancelButton.bottomAnchor.constraint(equalTo: cardView.bottomAnchor, constant: -20),
         ])
-    }
-
-    private func styleButton(_ btn: UIButton, title: String, filled: Bool, muted: Bool = false) {
-        btn.setTitle(title, for: .normal)
-        btn.titleLabel?.font = .systemFont(ofSize: 15, weight: filled ? .semibold : .regular)
-        btn.layer.cornerRadius = 10
-        btn.heightAnchor.constraint(equalToConstant: 44).isActive = true
-        if muted {
-            btn.setTitleColor(UIColor(white: 0.35, alpha: 1), for: .normal)
-        } else if filled {
-            btn.setTitleColor(.black, for: .normal)
-            btn.backgroundColor = accentGreen
-        } else {
-            btn.setTitleColor(accentGreen, for: .normal)
-            btn.backgroundColor = UIColor(red: 0.29, green: 0.87, blue: 0.50, alpha: 0.12)
-            btn.layer.borderColor = UIColor(red: 0.29, green: 0.87, blue: 0.50, alpha: 0.3).cgColor
-            btn.layer.borderWidth = 1
-        }
     }
 
     // MARK: - Processing
@@ -170,25 +120,17 @@ class ShareViewController: UIViewController {
         for attachment in attachments {
             if attachment.hasItemConformingToTypeIdentifier(UTType.url.identifier) {
                 attachment.loadItem(forTypeIdentifier: UTType.url.identifier, options: nil) { [weak self] item, error in
-                    if let error = error {
-                        logger.error("Failed to load URL item: \(error.localizedDescription)")
-                    }
+                    if let error = error { logger.error("Failed to load URL: \(error.localizedDescription)") }
                     DispatchQueue.main.async {
-                        if let url = item as? URL {
-                            self?.handleURL(url)
-                        } else if let str = item as? String, let url = URL(string: str) {
-                            self?.handleURL(url)
-                        } else {
-                            self?.showError("Couldn't read the shared URL")
-                        }
+                        if let url = item as? URL { self?.handleURL(url) }
+                        else if let str = item as? String, let url = URL(string: str) { self?.handleURL(url) }
+                        else { self?.showError("Couldn't read the shared URL") }
                     }
                 }
                 return
             } else if attachment.hasItemConformingToTypeIdentifier(UTType.plainText.identifier) {
                 attachment.loadItem(forTypeIdentifier: UTType.plainText.identifier, options: nil) { [weak self] item, error in
-                    if let error = error {
-                        logger.error("Failed to load text item: \(error.localizedDescription)")
-                    }
+                    if let error = error { logger.error("Failed to load text: \(error.localizedDescription)") }
                     DispatchQueue.main.async {
                         if let text = item as? String,
                            let url = (try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue))?
@@ -206,96 +148,25 @@ class ShareViewController: UIViewController {
     }
 
     private func handleURL(_ url: URL) {
-        // Validate before proceeding
-        let urlString = url.absoluteString
-        switch URLCleaner.validate(urlString) {
+        switch URLCleaner.validate(url.absoluteString) {
         case .failure(let error):
-            logger.warning("URL validation failed: \(error.localizedDescription) — \(urlString)")
-            showError("Invalid URL: \(error.errorDescription ?? "Unknown")")
+            logger.warning("URL validation failed: \(error.localizedDescription)")
+            showError(error.errorDescription ?? "Invalid URL")
             return
         case .success:
             break
         }
 
-        sharedURL = url
-        let host = url.host ?? urlString
-        logger.info("Processing URL: \(urlString)")
-        updateStatus("Checking archive for\n\(host)...")
-        checkArchiveExists(for: url)
-    }
+        logger.info("Opening archive for: \(url.absoluteString)")
 
-    // MARK: - Archive existence check
-
-    private func checkArchiveExists(for url: URL) {
         guard let archiveURL = URLCleaner.archiveSearchURL(for: url.absoluteString) else {
-            logger.error("Failed to build archive search URL for: \(url.absoluteString)")
             showError("Couldn't build archive URL")
             return
         }
 
-        var request = URLRequest(url: archiveURL)
-        request.httpMethod = "HEAD"
-        request.timeoutInterval = 8
-
-        let config = URLSessionConfiguration.default
-        config.timeoutIntervalForRequest = 8
-
-        let delegate = StatusCheckDelegate { [weak self] result in
-            DispatchQueue.main.async {
-                switch result {
-                case .exists:
-                    logger.info("Archive found — opening directly")
-                    self?.openInSafariVC(archiveURL)
-
-                case .notFound:
-                    logger.info("No archive found — prompting user to submit")
-                    self?.showNoArchivePrompt()
-
-                case .error(let reason):
-                    // archive.today may be down or rate-limiting — don't assume either way
-                    logger.warning("Archive check failed: \(reason)")
-                    self?.showCheckError(reason)
-                }
-            }
-        }
-
-        let session = URLSession(configuration: config, delegate: delegate, delegateQueue: nil)
-        session.dataTask(with: request).resume()
-    }
-
-    // MARK: - UI state transitions
-
-    private func showNoArchivePrompt() {
-        spinner.stopAnimating()
-        spinner.isHidden = true
-        statusLabel.text = "No archive found for this page.\nWould you like to submit it?"
-        statusLabel.textColor = UIColor(white: 0.55, alpha: 1)
-        promptStack.isHidden = false
-        cancelButton.isHidden = true
-        UIView.animate(withDuration: 0.2) { self.view.layoutIfNeeded() }
-    }
-
-    private func showCheckError(_ reason: String) {
-        // archive.today returned an unexpected response (5xx, timeout, etc.)
-        // Don't silently assume no archive exists — show a clear error instead
-        spinner.stopAnimating()
-        spinner.isHidden = true
-        statusLabel.text = "Couldn't reach archive.today.\nCheck your connection and try again."
-        statusLabel.textColor = UIColor(red: 0.97, green: 0.44, blue: 0.44, alpha: 1)
-        cancelButton.isHidden = false
-    }
-
-    // MARK: - Actions
-
-    @objc private func submitArchiveTapped() {
-        guard let url = sharedURL,
-              let submitURL = URLCleaner.archiveSubmitURL(for: url.absoluteString) else {
-            logger.error("Failed to build submit URL")
-            cancelTapped()
-            return
-        }
-        logger.info("Submitting for archiving: \(url.absoluteString)")
-        openInSafariVC(submitURL)
+        // Go straight to archive.today/newest/{url} — no pre-check.
+        // If no archive exists, archive.today shows its own page where the user can submit.
+        openInSafariVC(archiveURL)
     }
 
     private func openInSafariVC(_ url: URL) {
@@ -303,18 +174,11 @@ class ShareViewController: UIViewController {
             guard let self = self else { return }
             self.cardView.isHidden = true
             self.view.backgroundColor = .clear
-
             let safari = SFSafariViewController(url: url)
             safari.preferredControlTintColor = self.accentGreen
             safari.delegate = self
             self.present(safari, animated: true)
         }
-    }
-
-    // MARK: - Helpers
-
-    private func updateStatus(_ msg: String) {
-        DispatchQueue.main.async { self.statusLabel.text = msg }
     }
 
     private func showError(_ msg: String) {
@@ -332,67 +196,8 @@ class ShareViewController: UIViewController {
     @objc private func bgTapped() { cancelTapped() }
 }
 
-// MARK: - SFSafariViewControllerDelegate
 extension ShareViewController: SFSafariViewControllerDelegate {
     func safariViewControllerDidFinish(_ controller: SFSafariViewController) {
         extensionContext?.completeRequest(returningItems: [], completionHandler: nil)
-    }
-}
-
-// MARK: - HTTP status delegate
-private class StatusCheckDelegate: NSObject, URLSessionDataDelegate, URLSessionTaskDelegate {
-    let completion: (ArchiveCheckResult) -> Void
-    private var handled = false
-
-    init(completion: @escaping (ArchiveCheckResult) -> Void) {
-        self.completion = completion
-    }
-
-    func urlSession(_ session: URLSession,
-                    dataTask: URLSessionDataTask,
-                    didReceive response: URLResponse,
-                    completionHandler: @escaping (URLSession.ResponseDisposition) -> Void) {
-        guard !handled else { completionHandler(.cancel); return }
-        handled = true
-        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-        completion(archiveResult(for: status))
-        completionHandler(.cancel)
-    }
-
-    func urlSession(_ session: URLSession,
-                    task: URLSessionTask,
-                    willPerformHTTPRedirection response: HTTPURLResponse,
-                    newRequest request: URLRequest,
-                    completionHandler: @escaping (URLRequest?) -> Void) {
-        guard !handled else { completionHandler(nil); return }
-        handled = true
-        // Any redirect from /newest/ means an archive was found
-        completion(.exists)
-        completionHandler(nil)
-    }
-
-    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
-        guard !handled else { return }
-        handled = true
-        if let error = error {
-            completion(.error(error.localizedDescription))
-        }
-    }
-
-    private func archiveResult(for statusCode: Int) -> ArchiveCheckResult {
-        switch statusCode {
-        case 200, 301, 302, 303, 307, 308:
-            return .exists
-        case 404:
-            return .notFound
-        case 429:
-            return .error("archive.today is rate-limiting requests. Try again in a moment.")
-        case 500...599:
-            return .error("archive.today returned a server error (\(statusCode)).")
-        case 0:
-            return .error("No response received.")
-        default:
-            return .error("Unexpected response from archive.today (HTTP \(statusCode)).")
-        }
     }
 }
