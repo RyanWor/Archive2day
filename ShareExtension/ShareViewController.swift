@@ -209,9 +209,9 @@ class ShareViewController: UIViewController {
         // Validate before proceeding
         let urlString = url.absoluteString
         switch URLCleaner.validate(urlString) {
-        case .failure(let reason):
-            logger.warning("URL validation failed: \(reason) — \(urlString)")
-            showError("Invalid URL: \(reason)")
+        case .failure(let error):
+            logger.warning("URL validation failed: \(error.localizedDescription) — \(urlString)")
+            showError("Invalid URL: \(error.errorDescription ?? "Unknown")")
             return
         case .success:
             break

@@ -3,8 +3,8 @@ import Foundation
 /// All external service URLs and archive.today logic in one place.
 /// If archive.today changes its URL structure, update here only.
 enum ExternalURLs {
-    static let archiveNewest  = "https://archive.today/newest/"
-    static let archiveSubmit  = "https://archive.today/?run=1&url="
+    static let archiveNewest = "https://archive.today/newest/"
+    static let archiveSubmit = "https://archive.today/?run=1&url="
 }
 
 /// Result of checking whether an archive exists
@@ -14,10 +14,26 @@ enum ArchiveCheckResult {
     case error(String)  // 5xx, timeout, network failure — don't assume either way
 }
 
+/// Validation errors for URL checking
+enum URLValidationError: LocalizedError {
+    case empty
+    case malformed
+    case invalidScheme
+    case missingHost
+
+    var errorDescription: String? {
+        switch self {
+        case .empty:         return "URL is empty"
+        case .malformed:     return "Not a valid URL"
+        case .invalidScheme: return "URL must start with http:// or https://"
+        case .missingHost:   return "URL has no host"
+        }
+    }
+}
+
 /// Cleans and prepares URLs for archive.today lookup
 enum URLCleaner {
 
-    /// Tracking/UTM parameters that pollute archive lookups
     private static let trackingParams: Set<String> = [
         "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content",
         "utm_id", "fbclid", "gclid", "msclkid", "mc_eid", "ref", "referrer",
@@ -26,16 +42,14 @@ enum URLCleaner {
     ]
 
     /// Validates that a URL string is well-formed with an https/http scheme and a host
-    static func validate(_ urlString: String) -> Result<URL, String> {
+    static func validate(_ urlString: String) -> Result<URL, URLValidationError> {
         let trimmed = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return .failure("URL is empty") }
-        guard let url = URL(string: trimmed) else { return .failure("Not a valid URL") }
+        guard !trimmed.isEmpty else { return .failure(.empty) }
+        guard let url = URL(string: trimmed) else { return .failure(.malformed) }
         guard let scheme = url.scheme?.lowercased(), scheme == "https" || scheme == "http" else {
-            return .failure("URL must start with http:// or https://")
+            return .failure(.invalidScheme)
         }
-        guard let host = url.host, !host.isEmpty else {
-            return .failure("URL has no host")
-        }
+        guard let host = url.host, !host.isEmpty else { return .failure(.missingHost) }
         return .success(url)
     }
 
